@@ -2,8 +2,9 @@
 
 - [x] Brainstorm och designbeslut
 - [x] Skriv spec (plan.md)
-- [ ] Jakob granskar spec
-- [ ] Detaljerad implementationsplan
+- [x] Jakob granskar spec
+- [x] Detaljerad implementationsplan (`docs/plans/2026-10-09-implementation-plan.md`)
+- [ ] Jakob granskar implementationsplanen
 - [ ] Projektgrund: venv, requirements.txt, .env.example, mappstruktur
 - [ ] Konfiguration och databas (config.py, db.py)
 - [ ] Inloggning (auth.py) med DEV_USER lokalt
