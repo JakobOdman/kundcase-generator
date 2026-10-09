@@ -49,7 +49,7 @@ CMS-anpassning (Wix/WordPress, HTML-block, automatisk publicering) görs senare.
 
 - **FastAPI + Jinja2** – serverrenderade sidor, ingen separat frontend.
 - **SQLAlchemy** med `DATABASE_URL`: SQLite lokalt, Azure Database for PostgreSQL (Burstable) i drift.
-- **Claude API** (`claude-sonnet-5-5`) för utkast, frågor och invävning.
+- **Claude via Microsoft Foundry** (resurs `odmanfoundry`, driftsättning `claude-sonnet-5-5`) för utkast, frågor och invävning.
 - **Drift:** Azure App Service (Linux, Python), region Sweden Central. Start via gunicorn med uvicorn-worker.
 
 ### Inloggning
@@ -83,7 +83,8 @@ CMS-anpassning (Wix/WordPress, HTML-block, automatisk publicering) görs senare.
 | Variabel | Lokalt | Azure |
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./kundcase.db` | PostgreSQL-anslutningssträng |
-| `ANTHROPIC_API_KEY` | `.env` | App Settings |
+| `FOUNDRY_RESOURCE` | `odmanfoundry` | `odmanfoundry` |
+| `FOUNDRY_API_KEY` | `.env` | App Settings |
 | `DEV_USER` | `jakob.odman@mindcamp.se` | ej satt |
 | `BASE_URL` | `http://localhost:8000` | appens publika URL |
 

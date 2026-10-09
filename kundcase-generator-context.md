@@ -9,6 +9,7 @@
 - **Kundens roll:** styrd granskning – kommentarer per sektion + 3–5 riktade frågor. Ingen fri redigering.
 - **Slutgodkännande:** konsulten. Kunden samtycker till citering i formuläret.
 - **Export:** ren text per sektion + SEO-paket. CMS (troligen Wix, ej bekräftat) hanteras senare.
+- **AI:** Claude Sonnet 5.5 via Jakobs Microsoft Foundry-resurs `odmanfoundry` (inte direkt mot Anthropics API).
 - **Mejl:** konsulten skickar kundlänken själv i v1.
 
 ## Referenser

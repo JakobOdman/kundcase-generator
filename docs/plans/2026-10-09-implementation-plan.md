@@ -4,17 +4,17 @@
 
 **Mål:** En intern webbapp där en konsult får ett AI-skrivet kundcase, skickar en länk till kunden som svarar på riktade frågor, och sedan exporterar en färdig text med SEO-paket.
 
-**Arkitektur:** FastAPI med serverrenderade Jinja2-sidor. SQLAlchemy mot SQLite lokalt och PostgreSQL på Azure; Claude API med structured outputs för utkast, frågor och invävning. Konsultsidor under `/admin` skyddas av Easy Auth-headern (eller `DEV_USER` lokalt), kundsidan `/c/<token>` är öppen.
+**Arkitektur:** FastAPI med serverrenderade Jinja2-sidor. SQLAlchemy mot SQLite lokalt och PostgreSQL på Azure; Claude via Microsoft Foundry med structured outputs för utkast, frågor och invävning. Konsultsidor under `/admin` skyddas av Easy Auth-headern (eller `DEV_USER` lokalt), kundsidan `/c/<token>` är öppen.
 
-**Tech stack:** Python 3.12+, FastAPI, Jinja2, SQLAlchemy 2, python-multipart, python-dotenv, anthropic, psycopg, gunicorn/uvicorn, pytest.
+**Tech stack:** Python 3.12+, FastAPI, Jinja2, SQLAlchemy 2, python-multipart, python-dotenv, anthropic (Foundry-klienten), psycopg, gunicorn/uvicorn, pytest.
 
 **Spec:** `kundcase-generator-plan.md` (i projektroten). Läs den innan du börjar.
 
 ## Globala begränsningar
 
 - All kod körs i projektets `venv/`. Installera aldrig paket globalt.
-- Samma kod lokalt och på Azure – skillnaden ligger enbart i miljövariabler (`DATABASE_URL`, `ANTHROPIC_API_KEY`, `DEV_USER`, `BASE_URL`, `CLAUDE_MODEL`).
-- Modell: `claude-sonnet-5-5`. Sonnet 5.5 stödjer inte forcerad `tool_choice` – använd `output_config.format` (JSON-schema).
+- Samma kod lokalt och på Azure – skillnaden ligger enbart i miljövariabler (`DATABASE_URL`, `FOUNDRY_RESOURCE`, `FOUNDRY_API_KEY`, `DEV_USER`, `BASE_URL`, `CLAUDE_MODEL`).
+- Claude anropas via Microsoft Foundry-resursen `odmanfoundry` med `anthropic.AnthropicFoundry`. Modell/driftsättning: `claude-sonnet-5-5`. Sonnet 5.5 stödjer inte forcerad `tool_choice` – använd `output_config.format` (JSON-schema). Server-side `fallbacks` finns inte på Foundry och används inte.
 - Statusar: `utkast` → `hos_kund` → `kund_svarat` → `klar`. Andra övergångar ger 409.
 - Kundlänkens token: `secrets.token_urlsafe(32)`.
 - Kundsidan visar alltid: "Dina svar kan komma att citeras i det publicerade caset med namn och titel."
@@ -69,7 +69,7 @@ kundcase-generator/
 - Skapa: `requirements.txt`, `.env.example`, `pytest.ini`, `app/__init__.py`, `app/config.py`, `app/db.py`, `tests/__init__.py`, `tests/conftest.py`, `tests/test_db.py`
 
 **Gränssnitt:**
-- Producerar: `config.DATABASE_URL`, `config.DEV_USER`, `config.BASE_URL`, `config.CLAUDE_MODEL`; `db.Case`, `db.init_db(engine)`, `db.get_session()`, `db.nu()`; fixtures `session_fabrik`, `session`.
+- Producerar: `config.DATABASE_URL`, `config.FOUNDRY_RESOURCE`, `config.FOUNDRY_API_KEY`, `config.DEV_USER`, `config.BASE_URL`, `config.CLAUDE_MODEL`; `db.Case`, `db.init_db(engine)`, `db.get_session()`, `db.nu()`; fixtures `session_fabrik`, `session`.
 
 - [ ] **Steg 1: Skapa projektfiler och venv**
 
@@ -91,7 +91,8 @@ httpx
 `.env.example`:
 ```
 DATABASE_URL=sqlite:///./kundcase.db
-ANTHROPIC_API_KEY=
+FOUNDRY_RESOURCE=odmanfoundry
+FOUNDRY_API_KEY=
 DEV_USER=jakob.odman@mindcamp.se
 BASE_URL=http://localhost:8000
 CLAUDE_MODEL=claude-sonnet-5-5
@@ -125,11 +126,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./kundcase.db")
+FOUNDRY_RESOURCE = os.getenv("FOUNDRY_RESOURCE", "odmanfoundry")
+FOUNDRY_API_KEY = os.getenv("FOUNDRY_API_KEY", "")
 DEV_USER = os.getenv("DEV_USER", "")
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
 ```
-`ANTHROPIC_API_KEY` läses direkt av anthropic-klienten från miljön.
 
 - [ ] **Steg 3: Skriv det fallerande testet**
 
@@ -560,7 +562,7 @@ git commit -m "Sektioner, FAQ-hantering och export med SEO-paket"
 - Skapa: `app/ai.py`, `app/prompts/utkast.txt`, `app/prompts/fragor.txt`, `app/prompts/invavning.txt`, `tests/test_ai.py`
 
 **Gränssnitt:**
-- Konsumerar: `config.CLAUDE_MODEL`, `SEKTIONER`
+- Konsumerar: `config.CLAUDE_MODEL`, `config.FOUNDRY_RESOURCE`, `config.FOUNDRY_API_KEY`, `SEKTIONER`
 - Producerar:
   - `class AiFel(Exception)`
   - `skriv_utkast(formular: dict) -> dict` – nycklar: `titel`, alla `SEKTIONER`-nycklar, `faq`
@@ -585,7 +587,6 @@ class FalskKlient:
         self.svar = svar
         self.fel = fel
         self.anrop = []
-        self.beta = self
         self.messages = self
 
     def create(self, **kwargs):
@@ -606,7 +607,7 @@ def _svar(data, stop_reason="end_turn"):
 def klient(monkeypatch):
     def installera(**kwargs):
         falsk = FalskKlient(**kwargs)
-        monkeypatch.setattr(ai.anthropic, "Anthropic", lambda: falsk)
+        monkeypatch.setattr(ai.anthropic, "AnthropicFoundry", lambda **kwargs: falsk)
         return falsk
     return installera
 
@@ -754,16 +755,14 @@ class AiFel(Exception):
 
 
 def _anropa(promptfil, indata, schema):
-    klient = anthropic.Anthropic()
+    klient = anthropic.AnthropicFoundry(api_key=config.FOUNDRY_API_KEY, resource=config.FOUNDRY_RESOURCE)
     try:
-        svar = klient.beta.messages.create(
+        svar = klient.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=16000,
             system=(PROMPTMAPP / promptfil).read_text(encoding="utf-8"),
             messages=[{"role": "user", "content": json.dumps(indata, ensure_ascii=False, indent=2)}],
             output_config={"format": {"type": "json_schema", "schema": schema}},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
         )
     except anthropic.APIError as e:
         raise AiFel(f"Anropet till Claude misslyckades: {e}") from e
@@ -788,7 +787,7 @@ def vav_in_svar(utkast, fragor, kundsvar):
     return _anropa("invavning.txt", indata, UTKAST_SCHEMA)
 ```
 
-`fallbacks="default"` med betan `server-side-fallback-2026-07-01` gör att API:t automatiskt kör om anropet på en annan modell om Sonnet 5.5 nekar av säkerhetsskäl. Det ska inte hända för kundcase, men skyddar mot falsklarm.
+`model` är driftsättningens namn i Foundry (`claude-sonnet-5-5`). Om Sonnet nekar av säkerhetsskäl blir `stop_reason` `"refusal"` och det hanteras som ett vanligt `AiFel`.
 
 - [ ] **Steg 5: Kör testerna**
 
@@ -1924,7 +1923,7 @@ Intern app för Mindcamp: konsulten får ett AI-skrivet kundcase, kunden komplet
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fyll i ANTHROPIC_API_KEY
+cp .env.example .env   # fyll i FOUNDRY_API_KEY (Keys and Endpoint i Azure-portalen)
 uvicorn app.main:app --reload
 ```
 
@@ -1960,7 +1959,7 @@ uvicorn app.main:app --reload
 5. Väv in, markera klar, kontrollera exporten. Klistra in JSON-LD i https://validator.schema.org och kontrollera att den validerar.
 6. Öppna kundlänken – ska ge "Länken är inte längre aktiv".
 
-Om Claude-anropet ger 400 på `fallbacks`/`betas`: ta bort de två raderna i `app/ai.py` och anropa `klient.messages.create(...)` i stället för `klient.beta.messages.create(...)`.
+Om Foundry-anropet ger 400 på `output_config`: byt till att be om JSON i systemprompten och tolka svaret med `json.loads`, och säg till Jakob innan.
 
 - [ ] **Steg 3: Commit**
 
@@ -2007,7 +2006,8 @@ az webapp up -g rg-kundcase -n kundcase-mindcamp -l swedencentral --runtime "PYT
 az webapp config set -g rg-kundcase -n kundcase-mindcamp --startup-file "$(cat startup.txt)"
 az webapp config appsettings set -g rg-kundcase -n kundcase-mindcamp --settings \
   DATABASE_URL='postgresql+psycopg://kundcaseadmin:<lösenord>@pg-kundcase-mindcamp.postgres.database.azure.com:5432/kundcase?sslmode=require' \
-  ANTHROPIC_API_KEY='<nyckel>' \
+  FOUNDRY_RESOURCE='odmanfoundry' \
+  FOUNDRY_API_KEY='<nyckel>' \
   BASE_URL='https://kundcase-mindcamp.azurewebsites.net' \
   CLAUDE_MODEL='claude-sonnet-5-5' \
   SCM_DO_BUILD_DURING_DEPLOYMENT=true
